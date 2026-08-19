@@ -1,0 +1,98 @@
+name: Build Unsigned iPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: 'Xcode scheme name to build'
+        required: true
+        default: 'JailbreakInspectorApp'
+      configuration:
+        description: 'Build configuration'
+        required: true
+        default: 'Release'
+
+jobs:
+  build_unsigned_ipa:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode version
+        run: sudo xcode-select -switch /Applications/Xcode_15.4.app/Contents/Developer
+
+      - name: Resolve Xcode project or workspace
+        id: project
+        shell: bash
+        run: |
+          set -e
+
+          if ls *.xcworkspace >/dev/null 2>&1; then
+            echo "workspace=$(ls *.xcworkspace | head -n 1)" >> "$GITHUB_OUTPUT"
+            echo "project_type=workspace" >> "$GITHUB_OUTPUT"
+          elif ls *.xcodeproj >/dev/null 2>&1; then
+            echo "project=$(ls *.xcodeproj | head -n 1)" >> "$GITHUB_OUTPUT"
+            echo "project_type=project" >> "$GITHUB_OUTPUT"
+          else
+            echo "No .xcodeproj or .xcworkspace found in repo root."
+            exit 1
+          fi
+
+      - name: Archive app without signing
+        shell: bash
+        env:
+          SCHEME: ${{ github.event.inputs.scheme }}
+          CONFIGURATION: ${{ github.event.inputs.configuration }}
+        run: |
+          set -e
+          PROJECT_PATH="${{ steps.project.outputs.project }}"
+          WORKSPACE_PATH="${{ steps.project.outputs.workspace }}"
+
+          if [ -n "$WORKSPACE_PATH" ]; then
+            xcodebuild \
+              -workspace "$WORKSPACE_PATH" \
+              -scheme "$SCHEME" \
+              -configuration "$CONFIGURATION" \
+              -sdk iphoneos \
+              -derivedDataPath build/DerivedData \
+              -archivePath build/App.xcarchive \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              archive
+          else
+            xcodebuild \
+              -project "$PROJECT_PATH" \
+              -scheme "$SCHEME" \
+              -configuration "$CONFIGURATION" \
+              -sdk iphoneos \
+              -derivedDataPath build/DerivedData \
+              -archivePath build/App.xcarchive \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              archive
+          fi
+
+      - name: Package unsigned .ipa
+        shell: bash
+        run: |
+          set -e
+
+          APP_PATH=$(find build/App.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app bundle found inside the archive."
+            exit 1
+          fi
+
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent Payload AppUnsigned.ipa
+
+      - name: Upload unsigned iPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: build/AppUnsigned.ipa
+          if-no-files-found: error
