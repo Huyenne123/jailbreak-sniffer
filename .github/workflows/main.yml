@@ -19,7 +19,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        
+      - name: ok
+        run: |
+          echo $(ls)
+          echo $(pwd)
+          
       - name: Select Xcode version
         run: sudo xcode-select -switch /Applications/Xcode_15.4.app/Contents/Developer
 
